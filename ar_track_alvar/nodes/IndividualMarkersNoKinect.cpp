@@ -75,6 +75,10 @@ std::string output_frame;
 int marker_resolution = 5; // default marker resolution
 int marker_margin = 2; // default marker margin
 
+// Hard coded the camera optical link name (not coincide with camera link), for tf broadcast use
+// need to be changed if use different camera (link) name
+const string CAM_OPTICAL_ID = "/firefly/vi_sensor/camera_downward_optical_link";
+
 void getCapCallback (const sensor_msgs::ImageConstPtr & image_msg);
 
 
@@ -84,9 +88,13 @@ void getCapCallback (const sensor_msgs::ImageConstPtr & image_msg)
 	if(cam->getCamInfo_){
 		try{
 			tf::StampedTransform CamToOutput;
+			tf::StampedTransform OpticalToCam;
     			try{
 					tf_listener->waitForTransform(output_frame, image_msg->header.frame_id, image_msg->header.stamp, ros::Duration(1.0));
 					tf_listener->lookupTransform(output_frame, image_msg->header.frame_id, image_msg->header.stamp, CamToOutput);
+
+					tf_listener->waitForTransform(image_msg->header.frame_id, CAM_OPTICAL_ID, image_msg->header.stamp, ros::Duration(1.0));
+					tf_listener->lookupTransform(image_msg->header.frame_id, CAM_OPTICAL_ID, image_msg->header.stamp, OpticalToCam);
    				}
     			catch (tf::TransformException ex){
       				ROS_ERROR("%s",ex.what());
@@ -120,10 +128,10 @@ void getCapCallback (const sensor_msgs::ImageConstPtr & image_msg)
 
                 tf::Quaternion rotation (qx,qy,qz,qw);
                 tf::Vector3 origin (px,py,pz);
-                tf::Transform t (rotation, origin);
+                tf::Transform t (rotation, origin); // marker to camera optical link transform
                 tf::Vector3 markerOrigin (0, 0, 0);
                 tf::Transform m (tf::Quaternion::getIdentity (), markerOrigin);
-                tf::Transform markerPose = t * m; // marker pose in the camera frame
+                tf::Transform markerPose = t * m; // marker pose in the camera optical frame
 
                 tf::Vector3 z_axis_cam = tf::Transform(rotation, tf::Vector3(0,0,0)) * tf::Vector3(0, 0, 1);
 //                ROS_INFO("%02i Z in cam frame: %f %f %f",id, z_axis_cam.x(), z_axis_cam.y(), z_axis_cam.z());
@@ -139,12 +147,12 @@ void getCapCallback (const sensor_msgs::ImageConstPtr & image_msg)
 				out << id;
 				std::string id_string = out.str();
 				markerFrame += id_string;
-				tf::StampedTransform camToMarker (t, image_msg->header.stamp, image_msg->header.frame_id, markerFrame.c_str());
-    			tf_broadcaster->sendTransform(camToMarker);
+				tf::StampedTransform camToMarker (t, image_msg->header.stamp, CAM_OPTICAL_ID, markerFrame.c_str());
+    			tf_broadcaster->sendTransform(camToMarker); // actually markerToCam here
 
 				//Create the rviz visualization messages
 				tf::poseTFToMsg (markerPose, rvizMarker_.pose);
-				rvizMarker_.header.frame_id = image_msg->header.frame_id;
+				rvizMarker_.header.frame_id = CAM_OPTICAL_ID;
 				rvizMarker_.header.stamp = image_msg->header.stamp;
 				rvizMarker_.id = id;
 
@@ -197,7 +205,7 @@ void getCapCallback (const sensor_msgs::ImageConstPtr & image_msg)
 				rvizMarkerPub_.publish (rvizMarker_);
 
 				//Get the pose of the tag in the camera frame, then the output frame (usually torso)
-				tf::Transform tagPoseOutput = CamToOutput * markerPose;
+				tf::Transform tagPoseOutput = CamToOutput * OpticalToCam * markerPose; // added optical to cam transform
 
 				//Create the pose marker messages
 				ar_track_alvar_msgs::AlvarMarker ar_pose_marker;
